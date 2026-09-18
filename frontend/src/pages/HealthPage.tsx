@@ -54,7 +54,7 @@ export function HealthPage() {
   if (state.phase === "error") {
     return (
       <main>
-        <h1>dark-factory-product-1</h1>
+        <h1>Service Status</h1>
         <p role="alert">{state.message}</p>
         <Button onClick={reload}>Retry</Button>
       </main>
@@ -63,7 +63,7 @@ export function HealthPage() {
 
   return (
     <main>
-      <h1>dark-factory-product-1</h1>
+      <h1>Service Status</h1>
       <p>
         Backend: <strong>{state.health.status}</strong>
       </p>

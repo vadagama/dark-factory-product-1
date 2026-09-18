@@ -12,6 +12,10 @@ describe("HealthPage", () => {
 
     const markers = await screen.findAllByText("ok", { selector: "strong" });
     expect(markers).toHaveLength(2);
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Service Status$/);
+    expect(screen.queryByText("dark-factory-product-1")).not.toBeInTheDocument();
   });
 
   it("shows an alert with a retry action when the backend fails", async () => {
@@ -21,5 +25,9 @@ describe("HealthPage", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Backend unavailable");
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Service Status$/);
+    expect(screen.queryByText("dark-factory-product-1")).not.toBeInTheDocument();
   });
 });
