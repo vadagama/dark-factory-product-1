@@ -26,7 +26,9 @@ export function HealthPage() {
     } catch (error) {
       const message =
         error instanceof ApiError
-          ? `Backend unavailable: ${error.message} (status ${error.status})`
+          ? `${
+              error.status === 503 ? "Database" : "Backend"
+            } unavailable: ${error.message} (status ${error.status})`
           : `Backend unavailable: ${String(error)}`;
       return { phase: "error", message };
     }
