@@ -1,6 +1,6 @@
 ---
 schema: dark-factory.dev/specification/v1
-id: spec:dark-factory-product-1:2026:liveness-unit-test
+id: spec:dark-factory-product-1:liveness-unit-test
 type: specification
 title: Unit test for the GET / liveness endpoint
 product: dark-factory-product-1
@@ -8,235 +8,339 @@ status: draft
 change: chg:dark-factory-product-1:2026:0002
 ---
 
-# Specification — Unit test for the GET / liveness endpoint
+# Specification — unit test for the `GET /` liveness endpoint
+
+Stage: specification (attempt 1). Deliverables of this stage: this specification,
+the two scenario artifacts it links, and the criteria below. The implementation
+deliverable is the test module `backend/tests/unit/test_index.py` (the sole added
+file). The change touches **tests only**; no production code changes.
 
 ## 1. Problem
 
-The liveness endpoint is implemented by `index()` at `backend/src/app/health.py:39-42` as
-`@router.get("/", response_model=AppInfo)`, returning
-`AppInfo(app=request.app.title, version=app.__version__)`, where `AppInfo` has fields
-`app` and `version` (`backend/src/app/health.py:22-25`). `request.app.title` is set from
-`Settings.app_name` in `create_app` (`backend/src/app/main.py:32`), and `app.__version__` is
-`"0.1.0"` (`backend/src/app/__init__.py:3`).
+### 1.1 Corrections to the incoming description (established from the repository)
 
-Observable state of the repository:
+| Description says | Repository reality | Consequence for this specification |
+| --- | --- | --- |
+| The handler is at `app/src/app/health.py` | The handler `index()` is at `backend/src/app/health.py` (the `@router.get("/", response_model=AppInfo)` + `async def index(request: Request) -> AppInfo` pair); `AppInfo` is defined in the same module with fields `app: str` and `version: str` | Every path below uses the real `backend/src/...` layout |
+| `backend/tests/unit` "has no coverage for the liveness endpoint" | `backend/tests/unit/test_health.py` already contains `test_root_reports_app_metadata_without_the_database`, which asserts `GET /` returns `200` and `{"app": "dark-factory-product-1", "version": app.__version__}` | "Add the first coverage" is false and is not the requirement. The real gap is narrower (§1.2) |
+| "Add `backend/tests/unit/test_index.py`" | `backend/tests/unit/` holds `test_health.py` and `test_config.py`; there is no `conftest.py` anywhere under `backend/tests/` | The file name and the absence of new fixtures are kept as stated |
 
-- `backend/tests/unit/` contains `test_health.py`, `test_config.py` only. No file named
-  `test_index.py` exists (verifiable: directory listing / `git ls-files backend/tests/unit`).
-- `backend/tests/unit/test_health.py` contains `test_root_reports_app_metadata_without_the_database`
-  (lines 67-80), which asserts `GET /` returns 200 and
-  `{"app": "dark-factory-product-1", "version": app.__version__}`.
-- That existing test passes the default `app_name` (`"dark-factory-product-1"`, the
-  `Settings` default at `backend/src/app/config.py:19`), so it cannot distinguish the value
-  read from `Settings`/`request.app.title` from a hardcoded constant.
-- The liveness endpoint therefore has opportunistic coverage embedded in the health suite,
-  but no module dedicated to the `GET /` contract and no assertion that pins the configured
-  app name to a non-default value.
+### 1.2 The residual gap this change closes
 
-The problem this change addresses is the absence of a dedicated, non-default-configuration
-liveness unit test module; it is a discoverability and regression-sensitivity gap, not
-zero-coverage (the pre-existing `test_health.py` case means a "no coverage" claim would be
-false).
+`GET /` is the liveness surface: `health.py`'s `index()` returns
+`AppInfo(app=request.app.title, version=app.__version__)`, where
+`request.app.title` is set from `Settings.app_name` in `create_app`
+(`backend/src/app/main.py`) and `app.__version__` is the single version source
+(`backend/src/app/__init__.py`). The chart probes exactly this route as the
+liveness probe (`deploy/chart/values.yaml`: `backend.probes.liveness.path: /`,
+while readiness uses `/api/healthz`).
+
+Two facts make the current coverage weaker than the route's role:
+
+1. **No dedicated module.** The only coverage of the `GET /` contract is
+   opportunistic, buried in the health/readiness suite; a reader looking for the
+   liveness contract in `backend/tests/unit/` has no module named for it.
+2. **The existing assertion is configuration-blind.** It builds the app with the
+   *default* `app_name` (`"dark-factory-product-1"`, `backend/src/app/config.py`)
+   and asserts that same default string. A regression that hardcoded
+   `AppInfo(app="dark-factory-product-1", ...)` in `index()` — instead of reading
+   `request.app.title` — would therefore leave the existing test green.
+
+So the problem is not "no coverage" but "no dedicated, configuration-sensitive
+coverage of the liveness response contract". The existing case is deliberately
+kept (duplication is accepted here); removing or consolidating it is a separate
+cleanup change.
 
 ## 2. Scope
 
+Conventions used throughout: criterion ids are `AC-r.n` and are checked by a
+named command or by a stated, reproducible observation. `<base>` is the revision
+the change started from (`git merge-base HEAD main`); `<head>` is the change's
+final revision. `cd backend` is implied for every `uv run` command.
+
 ### 2.1 In scope
 
-- Add exactly one new test module: `backend/tests/unit/test_index.py`.
-- Exactly one happy-path test for `GET /`:
-  - response status is `200`;
-  - JSON body is exactly `{"app": <configured app_name>, "version": app.__version__}`;
-  - `create_app` is called with a `Settings` whose `app_name` is a deliberate non-default
-    value (so the assertion fails if the handler hardcodes or ignores configuration);
-  - the `version` assertion reads `app.__version__`, not a string literal.
-- Test is hermetic: it builds the app in-process and drives it through
-  `httpx.ASGITransport`; it opens no database connection and requires no PostgreSQL.
-- Reuse the style of `backend/tests/unit/test_health.py`: `from app.main import create_app`,
-  `from app.config import Settings`, `asyncio.run(scenario())`, `httpx.ASGITransport(app=...)`,
-  `httpx.AsyncClient(transport=transport, base_url="http://test")`, `-> None` on the test
-  function, and a module docstring.
-- Additive test-only change under `backend/tests/unit/`.
+1. Add exactly one file: `backend/tests/unit/test_index.py`.
+2. One happy-path test for `GET /`, driven in-process through
+   `httpx.ASGITransport`:
+   - the response status is `200`;
+   - the JSON body equals exactly `{"app": <configured app_name>, "version": app.__version__}`;
+   - the app under test is built with a **deliberate non-default** `app_name`
+     passed to `create_app`, so the assertion fails if the handler stops reading
+     the configured value;
+   - the expected `version` is read from the imported `app.__version__`, not
+     from a duplicated string literal.
+3. Hermetic execution: an explicit stub DSN that is never used to open a
+   connection, no PostgreSQL required, no `APP_TEST_DATABASE_URL` required.
+4. Reuse of the existing style of `backend/tests/unit/test_health.py`
+   (`create_app` from `app.main`, `Settings` from `app.config`, an inner
+   `async def scenario() -> None`, `asyncio.run(scenario())`, `httpx.ASGITransport`,
+   `httpx.AsyncClient(transport=..., base_url="http://test")`, `-> None` on the
+   test, a module docstring).
+5. Test-only diff under `backend/tests/`.
 
 ### 2.2 Out of scope
 
-- Any change under `backend/src/` (production code): `health.py`, `main.py`, `config.py`,
-  `__init__.py`, `db.py`, `models.py`, `migrations/`. The tests must pass against the current
-  production code.
-- The readiness endpoint `GET /api/healthz`, its `get_session` dependency, and the stub
-  session used by `test_health.py`.
-- Integration tests (`backend/tests/integration/`), a real PostgreSQL, and
-  `APP_TEST_DATABASE_URL`.
-- Frontend changes (`frontend/**`), Helm chart changes (`deploy/**`), CI workflow changes
-  (`.github/workflows/ci.yml`).
-- Deleting or rewriting `test_root_reports_app_metadata_without_the_database` in
-  `test_health.py`. Duplication between that case and `test_index.py` is accepted; removing it
-  is a separate cleanup change.
-- Changing `Settings.app_name` default (`"dark-factory-product-1"`) or the package version
-  (`"0.1.0"`).
-- New dependencies (`pyproject.toml`, `uv.lock` unchanged).
+1. Any file under `backend/src/` (`health.py`, `main.py`, `config.py`,
+   `__init__.py`, `db.py`, `models.py`, `migrations/`). The new test must pass
+   against the production code as it stands.
+2. The readiness endpoint `GET /api/healthz`, its `get_session` dependency, and
+   the `_StubSession` / `dependency_overrides` machinery of `test_health.py`.
+3. Editing, moving or deleting `test_root_reports_app_metadata_without_the_database`
+   in `backend/tests/unit/test_health.py`.
+4. Integration tests (`backend/tests/integration/`), a real PostgreSQL, and the
+   `APP_TEST_DATABASE_URL` gate.
+5. Frontend (`frontend/**`), chart/deploy (`deploy/**`), CI
+   (`.github/workflows/ci.yml`), documentation (`README.md`).
+6. Changing the `Settings.app_name` default (`"dark-factory-product-1"`) or the
+   package version (`backend/src/app/__init__.py`, `backend/pyproject.toml`).
+7. New dependencies, fixtures, helper modules or `conftest.py`
+   (`backend/pyproject.toml`, `backend/uv.lock` unchanged).
+8. Changing the liveness/readiness probe paths or any other chart value.
+9. Reconciling this file's name (`CHG-0001-...`) with the `change:` id in its
+   frontmatter — housekeeping, separate change.
 
 ## 3. Requirements and acceptance criteria
 
-Legend: each criterion is verifiable by file inspection, by executing a stated command, or by
-observing the stated test outcome.
+Each criterion is decided by a named command or by a stated, reproducible
+observation; a criterion that could not be checked this way would be a defect of
+this specification.
 
-### Requirement R1 — A dedicated unit-test module exists
+### R1 — The liveness contract gets its own module in the unit suite
 
-The change adds `backend/tests/unit/test_index.py` as the dedicated home of the `GET /`
-liveness contract.
+- **AC-1.1** `backend/tests/unit/test_index.py` exists in the working tree of
+  `<head>` and is the only file added by the change.
+  (Verify: `git diff --name-only <base>..<head>` lists exactly that path as added.)
+- **AC-1.2** `uv run pytest tests/unit/test_index.py -q` exits `0` and reports at
+  least one passed test with `0 failed, 0 skipped, 0 errors`.
+  (Verify: run the command with `APP_TEST_DATABASE_URL` unset.)
+- **AC-1.3** The module collects exactly one test:
+  `uv run pytest tests/unit/test_index.py --collect-only -q` reports exactly one
+  collected item. (Verify: run the command.)
+- **AC-1.4** The module contains no skip/xfail machinery (`pytest.mark.skip`,
+  `pytest.mark.skipif`, `pytest.mark.xfail`) and no conditional that can bypass
+  the assertions. (Verify: file inspection; corroborated by the "0 skipped" of
+  AC-1.2.)
 
-- **AC-1.1** `backend/tests/unit/test_index.py` exists in the repository working tree after
-  the change. (Verify: file path present.)
-- **AC-1.2** `cd backend && uv run pytest tests/unit/test_index.py -q` exits 0 and its summary
-  reports at least one passed test. (Verify: run the command.)
-- **AC-1.3** The module is located under `backend/tests/unit/` (not `integration/`) and its
-  only HTTP transport is `httpx.ASGITransport`; it contains no `connect`, `create_engine` call,
-  or `DATABASE_URL` read. (Verify: file inspection.)
+### R2 — `GET /` answers `200` on the happy path
 
-### Requirement R2 — `GET /` returns HTTP 200 (happy path)
+- **AC-2.1** The test builds an application with `create_app(settings)`, drives it
+  with `httpx.ASGITransport` and `httpx.AsyncClient(transport=..., base_url="http://test")`,
+  issues `client.get("/")`, and asserts `response.status_code == 200`.
+  (Verify: the assertion is present in `test_index.py`; AC-1.2 passes.)
 
-- **AC-2.1** The test performs a request with `client.get("/")` against
-  `httpx.AsyncClient(transport=httpx.ASGITransport(app=application), base_url="http://test")`
-  and asserts `response.status_code == 200`. (Verify: assertion present; test passes.)
+### R3 — The body carries the configured app name and the package version
 
-### Requirement R3 — The body carries the configured app name and the package version
+- **AC-3.1** The test asserts `response.json() == {"app": settings.app_name, "version": app.__version__}`,
+  where `settings` is the exact `Settings` instance passed to `create_app` and
+  `app` is the imported package. (Verify: assertion present; AC-1.2 passes.)
+- **AC-3.2** The `Settings` instance passed to `create_app` sets `app_name` to an
+  explicit string literal that differs from the default `"dark-factory-product-1"`,
+  and the string `dark-factory-product-1` does not occur anywhere in
+  `test_index.py`. (Verify: `grep -n 'dark-factory-product-1' backend/tests/unit/test_index.py`
+  returns no match; the `Settings(...)` call shows the non-default literal.)
+- **AC-3.3** The expected `version` is the imported attribute `app.__version__`
+  and the module contains no version string literal.
+  (Verify: `grep -nE '"[0-9]+\.[0-9]+\.[0-9]+"' backend/tests/unit/test_index.py`
+  returns no match.)
+- **AC-3.4** The asserted body is compared with dictionary equality against a
+  two-key literal — exactly the keys `app` and `version` — not by key presence or
+  subset matching. (Verify: assertion inspection; plus the sensitivity observation
+  of AC-3.5.)
+- **AC-3.5** Sensitivity, observed once and reverted: with a scratch copy of
+  `backend/src/app/health.py` in which `index()` returns
+  `AppInfo(app="dark-factory-product-1", version=app.__version__)`, the command of
+  AC-1.2 fails; after reverting the mutation it passes again. The same holds when
+  a third field is added to `AppInfo`. The mutation must not survive into the
+  change (guarded by AC-6.2). (Verify: run the mutated command, record the
+  failure, revert, re-run, record the pass.)
 
-- **AC-3.1** The test asserts
-  `response.json() == {"app": settings.app_name, "version": app.__version__}`, where
-  `settings` is the exact `Settings` instance passed to `create_app` and `app` is the imported
-  `app` package. (Verify: assertion present; test passes.)
-- **AC-3.2** The `Settings` instance passed to `create_app` sets `app_name` to a value other
-  than the default `"dark-factory-product-1"` (the value is a literal string in the test, e.g.
-  `"liveness-test-app"`), and the test file contains no dependence on the default value.
-  (Verify: the non-default literal appears; replacing the handler body with a constant
-  `AppInfo(app="dark-factory-product-1", version=...)` makes AC-3.1's assertion fail.)
-- **AC-3.3** The `version` member of the expected body is `app.__version__`; the test file
-  contains no version string literal (`"0.1.0"` does not appear in `test_index.py`).
-  (Verify: `grep -n '"0\.1\.0"' backend/tests/unit/test_index.py` returns no match.)
-- **AC-3.4** The asserted JSON object has exactly the keys `app` and `version` (dict equality,
-  not a subset check). (Verify: the assertion uses `==` against a two-key dict; adding a third
-  field to `AppInfo` makes the assertion fail.)
+### R4 — Hermetic and environment-independent execution
 
-### Requirement R4 — The test is hermetic (no database, no external network)
+- **AC-4.1** The test never opens a database connection or a socket: it
+  constructs `Settings(app_name=<non-default>, database_url=<stub DSN>)` and
+  reaches the app only through `httpx.ASGITransport`; the module contains no
+  `create_engine`, `.connect(`, `.execute(` or driver call.
+  (Verify: file inspection; AC-1.2 passes with no server reachable at the stub DSN.)
+- **AC-4.2** `uv run pytest tests/unit/test_index.py -q` exits `0` with
+  `APP_TEST_DATABASE_URL` unset. (Verify: run with the variable unset.)
+- **AC-4.3** The module does not use the readiness dependency or its doubles: no
+  reference to `get_session`, `dependency_overrides` or a stub session class.
+  (Verify: grep of `test_index.py` returns no match for each name.)
+- **AC-4.4** The outcome does not depend on the process environment or on a
+  developer's `backend/.env`: with `APP_NAME=hostile-name` and
+  `DATABASE_URL=postgresql+psycopg://hostile:hostile@127.0.0.1:1/hostile` exported,
+  the command of AC-1.2 still exits `0`, because the values the assertions use are
+  supplied as explicit constructor arguments.
+  (Verify: run the command with those two variables exported.)
 
-- **AC-4.1** The test constructs
-  `Settings(app_name=<non-default>, database_url="postgresql+psycopg://stub:stub@localhost:5432/stub")`;
-  the DSN points at an unreachable host/port and is never awaited. (Verify: file inspection;
-  the literal matches the stub DSN already used at `backend/tests/unit/test_health.py:30`.)
-- **AC-4.2** `cd backend && uv run pytest tests/unit/test_index.py -q` exits 0 with
-  `APP_TEST_DATABASE_URL` unset in the environment. (Verify: run with the variable unset.)
-- **AC-4.3** No outbound socket connection is opened by the test: it uses only
-  `httpx.ASGITransport` (in-process ASGI call), never `httpx` against a real host and never a
-  database driver. (Verify: file inspection; the test passes with no PostgreSQL listening on
-  `localhost:5432`.)
+### R5 — The existing unit-test style is reused
 
-### Requirement R5 — Existing unit-test style and fixtures are reused
+- **AC-5.1** The test follows the construction/drive pattern of
+  `backend/tests/unit/test_health.py`: `create_app(settings)` from `app.main`,
+  an inner `async def scenario() -> None`, `asyncio.run(scenario())`,
+  `httpx.ASGITransport(app=application)`,
+  `httpx.AsyncClient(transport=transport, base_url="http://test")`, and `-> None`
+  on the test function. (Verify: structural comparison of the two modules.)
+- **AC-5.2** The module's first statement is a docstring stating that the module
+  holds hermetic unit tests of the `GET /` liveness endpoint. (Verify: the first
+  statement of `test_index.py` is a string literal containing `liveness`.)
+- **AC-5.3** The import block is limited to `asyncio`, `httpx`, `app` (for
+  `__version__`), `from app.config import Settings` and `from app.main import create_app`;
+  no fixture, helper module or `conftest.py` is added under `backend/tests/`.
+  (Verify: import block inspection; the diff of AC-6.1 shows no other added file.)
+- **AC-5.4** The added test function name does not collide with an existing test
+  name in `backend/tests/unit/` (it differs from
+  `test_root_reports_app_metadata_without_the_database`).
+  (Verify: grep of the test modules for the function name.)
 
-- **AC-5.1** The test uses the same construction and drive pattern as
-  `backend/tests/unit/test_health.py`: `create_app(settings)` from `app.main`, an inner
-  `async def scenario() -> None`, `asyncio.run(scenario())`, `httpx.ASGITransport`,
-  `httpx.AsyncClient(transport=transport, base_url="http://test")`, and `-> None` on the test
-  function. (Verify: structural inspection against `test_health.py`.)
-- **AC-5.2** The module opens with a docstring stating that it is a hermetic unit test of the
-  `GET /` liveness endpoint (mirroring the `test_health.py` module docstring). (Verify:
-  `test_index.py` first statement is a string literal containing "liveness".)
-- **AC-5.3** No new fixture, helper module, or conftest file is introduced; the test depends
-  only on `app`, `app.config.Settings`, `app.main.create_app`, `asyncio`, and `httpx`.
-  (Verify: import list of `test_index.py`.)
+### R6 — Test-only change; production code and existing tests are untouched
 
-### Requirement R6 — Test-only change; no production code is modified
+- **AC-6.1** `git diff --name-only <base>..<head>` lists only
+  `backend/tests/unit/test_index.py`. (Verify: run the command.)
+- **AC-6.2** `git diff <base>..<head> -- backend/src` produces no output — the
+  `index` signature, `response_model=AppInfo` and the `AppInfo` fields are
+  byte-identical to `<base>`. (Verify: run the command.)
+- **AC-6.3** `backend/tests/unit/test_health.py` is unchanged from `<base>` and
+  still contains `test_root_reports_app_metadata_without_the_database`; no
+  existing test is deleted, renamed or moved. (Verify:
+  `git diff <base>..<head> -- backend/tests/unit/test_health.py` produces no output.)
+- **AC-6.4** No dependency, CI, chart or frontend path differs from `<base>`:
+  `backend/pyproject.toml`, `backend/uv.lock`, `.github/workflows/ci.yml`,
+  `deploy/**`, `frontend/**`. (Verify: `git diff --name-only <base>..<head> -- <path>`
+  is empty for each.)
 
-- **AC-6.1** `git diff --name-only <baseline>..<head>` lists only paths under
-  `backend/tests/`. (Verify: run the command on the change diff.)
-- **AC-6.2** No file under `backend/src/` differs from the baseline revision. (Verify:
-  `git diff --name-only <baseline>..<head> -- backend/src` is empty.)
-- **AC-6.3** `backend/src/app/health.py` is byte-identical to the baseline (the `index`
-  signature, `response_model=AppInfo`, and `AppInfo` fields are unchanged). (Verify: empty
-  `git diff` for that path.)
+### R7 — The repository backend gates stay green
 
-### Requirement R7 — Repository backend gates stay green
-
-- **AC-7.1** `cd backend && uv run ruff check .` exits 0.
-- **AC-7.2** `cd backend && uv run ruff format --check .` exits 0.
-- **AC-7.3** `cd backend && uv run mypy` exits 0 under the repository's strict configuration
-  (`backend/pyproject.toml:48-55`, with the `tests.*` override).
-- **AC-7.4** `cd backend && uv run pytest` exits 0; unit tests pass and the PostgreSQL
-  integration tests skip when `APP_TEST_DATABASE_URL` is unset
-  (`backend/tests/integration/test_health_database.py:19-20`).
-- **AC-7.5** The only DSN literal introduced by the change is the stub DSN already present at
-  `backend/tests/unit/test_health.py:30`; no real credential or secret is added. (Verify:
-  the new file contains no credential other than that stub, and the Gitleaks stage of
-  `.github/workflows/ci.yml` reports no new finding.)
+- **AC-7.1** `uv run ruff check .` exits `0`.
+- **AC-7.2** `uv run ruff format --check .` exits `0`.
+- **AC-7.3** `uv run mypy` exits `0` under the repository configuration (`strict`
+  in `backend/pyproject.toml`, with the `tests.*` override).
+- **AC-7.4** `uv run pytest` exits `0` with `APP_TEST_DATABASE_URL` unset (the
+  integration modules report skipped, not failed) and also exits `0` with
+  `APP_TEST_DATABASE_URL` pointing at a PostgreSQL instance.
+- **AC-7.5** The change adds no credential-shaped literal beyond the stub DSN
+  already present in `backend/tests/unit/test_health.py`, and the gitleaks stage
+  of `.github/workflows/ci.yml` reports no new finding. (Verify: inspect the added
+  lines; the stub DSN is a non-secret placeholder, and the gitleaks run exits `0`.)
 
 ## 4. Scenarios
 
-Scenario IDs are referenced by Section 5.
+Scenarios S1 and S2 are observable product flows, recorded as
+`dark-factory.dev/scenario/v1` artifacts under `.factory/scenarios/`. S3 is the
+change-level gate scenario: it observes the diff and the gates rather than a
+product flow, so it is deliberately not backed by a scenario artifact.
 
-- **SCN-1 — Liveness happy path.** A client issues `GET /` to the app (in-process ASGI
-  transport). The app responds `200` with a JSON object whose keys are exactly `app` and
-  `version`. Covers the contract of `backend/src/app/health.py:39-42`.
-- **SCN-2 — Configuration is reported, not hardcoded.** The app is created with a
-  non-default `app_name`. The `app` member of the response equals that configured name,
-  demonstrating that the handler reports `request.app.title` (set in
-  `backend/src/app/main.py:32`) rather than a constant.
-- **SCN-3 — Package version is reported.** The `version` member of the response equals the
-  imported package attribute `app.__version__` (`backend/src/app/__init__.py:3`), and no
-  version literal is duplicated in the test.
-- **SCN-4 — Hermetic execution.** The dedicated test runs in a process with no reachable
-  database and no `APP_TEST_DATABASE_URL`, and still passes, so it is a true unit test and is
-  not skipped or gated on infrastructure.
-- **SCN-5 — Gate-green, test-only change.** A tree that differs from the baseline only by
-  `backend/tests/unit/test_index.py` passes `ruff check`, `ruff format --check`, `mypy`, and
-  `pytest`, and `backend/src/**` is unchanged.
-
-## 5. Traceability (criteria → scenarios)
-
-| Acceptance criterion | Scenario(s) | Verifying action |
+| ID | Scenario artifact | Observable flow |
 | --- | --- | --- |
-| AC-1.1 | SCN-5 | File `backend/tests/unit/test_index.py` present |
-| AC-1.2 | SCN-1, SCN-4 | `uv run pytest tests/unit/test_index.py -q` exits 0 |
-| AC-1.3 | SCN-4 | Inspect imports/transport in `test_index.py` |
-| AC-2.1 | SCN-1 | Assertion `response.status_code == 200`; test passes |
-| AC-3.1 | SCN-1, SCN-2, SCN-3 | Body equality assertion; test passes |
-| AC-3.2 | SCN-2 | Non-default `app_name` literal present; mutation of handler to a constant fails the assertion |
-| AC-3.3 | SCN-3 | `app.__version__` used; no `"0.1.0"` literal in the file |
-| AC-3.4 | SCN-1 | Two-key dict equality in the assertion |
-| AC-4.1 | SCN-4 | Stub DSN matches `test_health.py:30`; never awaited |
-| AC-4.2 | SCN-4 | `pytest tests/unit/test_index.py` with `APP_TEST_DATABASE_URL` unset |
-| AC-4.3 | SCN-4 | Only `httpx.ASGITransport` used; no socket/driver |
-| AC-5.1 | SCN-1 | Structural comparison with `test_health.py` |
-| AC-5.2 | SCN-5 | Module docstring mentions liveness |
-| AC-5.3 | SCN-5 | Import list is limited to `app`, `Settings`, `create_app`, `asyncio`, `httpx` |
-| AC-6.1 | SCN-5 | `git diff --name-only` shows only `backend/tests/**` |
-| AC-6.2 | SCN-5 | `git diff --name-only -- backend/src` is empty |
-| AC-6.3 | SCN-5 | `git diff -- backend/src/app/health.py` is empty |
-| AC-7.1 | SCN-5 | `uv run ruff check .` exits 0 |
-| AC-7.2 | SCN-5 | `uv run ruff format --check .` exits 0 |
-| AC-7.3 | SCN-5 | `uv run mypy` exits 0 |
-| AC-7.4 | SCN-4, SCN-5 | `uv run pytest` exits 0 |
-| AC-7.5 | SCN-5 | No credential beyond the existing stub DSN; Gitleaks stage green |
+| S1 | `scenario:dark-factory-product-1:liveness:app-metadata` (`.factory/scenarios/SCN-001-liveness-app-metadata.md`) | `GET /` answers `200` with exactly `{"app": <configured app_name>, "version": app.__version__}` — the configured, non-default name and the package version. |
+| S2 | `scenario:dark-factory-product-1:liveness:database-independent` (`.factory/scenarios/SCN-002-liveness-database-independent.md`) | `GET /` answers `200` with no PostgreSQL reachable and no dependence on ambient environment values; readiness (`/api/healthz`) is the surface that reflects the database. |
+| S3 | — (change-level) | The tree differs from `<base>` only by `backend/tests/unit/test_index.py`; ruff, mypy and pytest exit `0`; `backend/src/**` is unchanged. |
 
-Reverse mapping — every scenario is covered by at least one criterion:
+- **S1 — The liveness endpoint reports the configured app name and the package
+  version.**
+  Given an app built by
+  `create_app(Settings(app_name="liveness-test-app", database_url=<stub DSN>))`;
+  When a client issues `GET /` through the in-process ASGI transport;
+  Then the status is `200`, the JSON body is exactly
+  `{"app": "liveness-test-app", "version": app.__version__}` with no additional
+  keys, the `app` value is the configured name (a handler returning the hardcoded
+  default `"dark-factory-product-1"` fails the assertion), and the `version` value
+  is the imported `app.__version__` with no literal duplicated in the test.
+  Criteria: AC-1.1–AC-1.4, AC-2.1, AC-3.1–AC-3.5, AC-5.1, AC-5.2, AC-5.4, AC-7.*.
+- **S2 — Liveness answers while the database is unreachable.**
+  Given no PostgreSQL listening at the configured DSN, `APP_TEST_DATABASE_URL`
+  unset, and possibly hostile `APP_NAME`/`DATABASE_URL` values in the process
+  environment;
+  When the dedicated module runs;
+  Then it passes with `0 skipped`, having attempted no connection and no socket
+  I/O. Criteria: AC-1.2, AC-1.4, AC-4.1–AC-4.4, AC-7.*.
+- **S3 — Test-only, gate-green change.**
+  Given a tree that differs from `<base>` only by
+  `backend/tests/unit/test_index.py`;
+  When `ruff check`, `ruff format --check`, `mypy` and `pytest` run;
+  Then all exit `0`, `backend/src/**` and `backend/tests/unit/test_health.py` are
+  unchanged, and no new credential-shaped literal was added.
+  Criteria: AC-1.1, AC-5.3, AC-6.1–AC-6.4, AC-7.*.
+
+## 5. Traceability — criteria to scenarios
+
+| Criterion | Requirement (short) | Scenario(s) | Verifying action |
+| --- | --- | --- | --- |
+| AC-1.1 | module added, sole added file | S1, S3 | `git diff --name-only <base>..<head>` |
+| AC-1.2 | focused run passes, nothing skipped | S1, S2 | `uv run pytest tests/unit/test_index.py -q` |
+| AC-1.3 | exactly one test collected | S1 | `uv run pytest tests/unit/test_index.py --collect-only -q` |
+| AC-1.4 | no skip/xfail machinery | S1, S2 | inspection + "0 skipped" of AC-1.2 |
+| AC-2.1 | status assertion `200` | S1 | assertion present; AC-1.2 passes |
+| AC-3.1 | body equality vs configured name/version | S1 | assertion present; AC-1.2 passes |
+| AC-3.2 | non-default `app_name`, no default literal | S1 | grep for `dark-factory-product-1` (no match) |
+| AC-3.3 | `app.__version__`, no version literal | S1 | grep for `x.y.z` literals (no match) |
+| AC-3.4 | exact two-key dict equality | S1 | assertion inspection |
+| AC-3.5 | hardcoded-value mutation fails the test | S1 | mutate `health.py`, run AC-1.2, revert |
+| AC-4.1 | no connection/socket, ASGI transport only | S2 | inspection; run without PostgreSQL |
+| AC-4.2 | passes with `APP_TEST_DATABASE_URL` unset | S2 | run with the variable unset |
+| AC-4.3 | no readiness dependency or doubles | S2 | grep for `get_session`/`dependency_overrides` |
+| AC-4.4 | immune to hostile env/`.env` values | S2 | run with `APP_NAME`/`DATABASE_URL` exported |
+| AC-5.1 | same drive pattern as `test_health.py` | S1 | structural comparison |
+| AC-5.2 | module docstring names the liveness endpoint | S1 | first statement of `test_index.py` |
+| AC-5.3 | imports limited, no new fixture/conftest | S1, S3 | import block + diff file list |
+| AC-5.4 | no test-name collision | S1 | grep of `backend/tests/unit/` |
+| AC-6.1 | only `test_index.py` changes | S3 | `git diff --name-only <base>..<head>` |
+| AC-6.2 | `backend/src` byte-identical | S3 | `git diff <base>..<head> -- backend/src` |
+| AC-6.3 | existing test module untouched | S3 | `git diff <base>..<head> -- backend/tests/unit/test_health.py` |
+| AC-6.4 | no dependency/CI/chart/frontend change | S3 | `git diff --name-only` per path |
+| AC-7.1 | `ruff check` green | S1, S2, S3 | `uv run ruff check .` |
+| AC-7.2 | `ruff format --check` green | S1, S2, S3 | `uv run ruff format --check .` |
+| AC-7.3 | `mypy` green | S1, S2, S3 | `uv run mypy` |
+| AC-7.4 | full pytest green, integration skips | S1, S2, S3 | `uv run pytest` with and without the DSN |
+| AC-7.5 | no new secret-shaped literal | S1, S2, S3 | inspect diff; gitleaks stage |
+
+Reverse mapping — every scenario is covered by at least one criterion, and every
+criterion maps to at least one scenario:
 
 | Scenario | Covered by |
 | --- | --- |
-| SCN-1 | AC-1.2, AC-2.1, AC-3.1, AC-3.4, AC-5.1 |
-| SCN-2 | AC-3.1, AC-3.2 |
-| SCN-3 | AC-3.1, AC-3.3 |
-| SCN-4 | AC-1.2, AC-1.3, AC-4.1, AC-4.2, AC-4.3, AC-7.4 |
-| SCN-5 | AC-1.1, AC-5.2, AC-5.3, AC-6.1, AC-6.2, AC-6.3, AC-7.1, AC-7.2, AC-7.3, AC-7.5 |
+| S1 | AC-1.1, AC-1.2, AC-1.3, AC-1.4, AC-2.1, AC-3.1, AC-3.2, AC-3.3, AC-3.4, AC-3.5, AC-5.1, AC-5.2, AC-5.3, AC-5.4, AC-7.1–AC-7.5 |
+| S2 | AC-1.2, AC-1.4, AC-4.1, AC-4.2, AC-4.3, AC-4.4, AC-7.1–AC-7.5 |
+| S3 | AC-1.1, AC-5.3, AC-6.1, AC-6.2, AC-6.3, AC-6.4, AC-7.1–AC-7.5 |
 
 ## 6. Definition of done
 
-The change is done when all of the following commands succeed on the final revision of the
-change, with `APP_TEST_DATABASE_URL` unset:
+All of the following hold on `<head>`, with `APP_TEST_DATABASE_URL` unset unless
+stated otherwise:
 
 ```sh
 cd backend
-uv run pytest tests/unit/test_index.py -q   # AC-1.2, AC-2.1, AC-3.*, AC-4.2
-uv run pytest                               # AC-7.4 (integration tests skip)
-uv run ruff check .                         # AC-7.1
-uv run ruff format --check .                # AC-7.2
-uv run mypy                                 # AC-7.3
-git diff --name-only -- backend/src         # AC-6.2 (must be empty)
+uv run pytest tests/unit/test_index.py -q                  # AC-1.2, AC-2.1, AC-3.1, AC-4.2
+uv run pytest tests/unit/test_index.py --collect-only -q   # AC-1.3 (exactly 1 item)
+APP_NAME=hostile-name \
+  DATABASE_URL=postgresql+psycopg://hostile:hostile@127.0.0.1:1/hostile \
+  uv run pytest tests/unit/test_index.py -q                # AC-4.4
+uv run pytest                                              # AC-7.4 (integration skips)
+uv run ruff check .                                        # AC-7.1
+uv run ruff format --check .                               # AC-7.2
+uv run mypy                                                # AC-7.3
+git diff --name-only <base>..<head>                        # AC-1.1, AC-6.1 (one added file)
+git diff <base>..<head> -- backend/src                     # AC-6.2 (empty)
+git diff <base>..<head> -- backend/tests/unit/test_health.py   # AC-6.3 (empty)
+grep -rn "dark-factory-product-1" tests/unit/test_index.py     # AC-3.2 (no match)
 ```
+
+plus the recorded AC-3.5 mutation observation (fail, revert, pass).
+
+## 7. Assumptions and accepted risks
+
+- **Assumption** — `create_app(settings)` is importable and runnable without
+  `DATABASE_URL` in the environment, as `backend/src/app/main.py` documents and
+  `test_health.py` already relies on; the engine is created lazily and `GET /`
+  never uses it.
+- **Assumption** — explicit constructor arguments take precedence over environment
+  variables and `.env` in `pydantic-settings`, so the assertions of R3 and R4 are
+  deterministic on any developer machine. AC-4.4 checks this observation instead of
+  assuming it; if the check fails, only AC-4.4 is invalidated, not R3.
+- **Accepted risk** — intentional duplication with
+  `test_root_reports_app_metadata_without_the_database`; consolidation is a
+  follow-up change.
+- **Low risk** — the change produces no runtime artifact from tests, adds no
+  dependency and cannot alter a deployed image; the new test carries no skip
+  marker, so it cannot silently disappear from the suite.
