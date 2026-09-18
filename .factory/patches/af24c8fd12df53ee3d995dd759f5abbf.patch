@@ -1,0 +1,15 @@
+diff --git a/frontend/src/pages/HealthPage.tsx b/frontend/src/pages/HealthPage.tsx
+--- a/frontend/src/pages/HealthPage.tsx
++++ b/frontend/src/pages/HealthPage.tsx
+@@ -24,7 +24,9 @@ export function HealthPage() {
+     } catch (error) {
+       const message =
+         error instanceof ApiError
+-          ? `Backend unavailable: ${error.message} (status ${error.status})`
++          ? `${
++              error.status === 503 ? "Database" : "Backend"
++            } unavailable: ${error.message} (status ${error.status})`
+           : `Backend unavailable: ${String(error)}`;
+       return { phase: "error", message };
+     }
+*** End Patch

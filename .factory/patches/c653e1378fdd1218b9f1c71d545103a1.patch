@@ -1,0 +1,15 @@
+diff --git a/frontend/src/pages/HealthPage.tsx b/frontend/src/pages/HealthPage.tsx
+--- a/frontend/src/pages/HealthPage.tsx
++++ b/frontend/src/pages/HealthPage.tsx
+@@ -4,7 +4,9 @@ import { ApiError, fetchHealth, type Health } from "../api/client";
+ import { Button } from "@small/ui";
+ 
+ type PageState =
+-  { phase: "loading" } | { phase: "ready"; health: Health } | { phase: "error"; message: string };
++  | { phase: "loading" }
++  | { phase: "ready"; health: Health }
++  | { phase: "error"; message: string };
+ 
+ /**
+  * First page of the blueprint: calls the backend /api/healthz and shows
+*** End Patch
