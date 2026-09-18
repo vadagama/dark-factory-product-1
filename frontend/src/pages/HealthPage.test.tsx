@@ -17,6 +17,10 @@ describe("HealthPage", () => {
     const markers = await screen.findAllByText("ok", { selector: "strong" });
     expect(markers).toHaveLength(2);
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Service Status$/);
+    expect(screen.queryByText("dark-factory-product-1")).not.toBeInTheDocument();
   });
 
   it("reports the database as unavailable when readiness answers 503", async () => {
@@ -82,5 +86,9 @@ describe("HealthPage", () => {
       "Backend unavailable: TypeError: fetch failed",
     );
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+
+    const heading = screen.getByRole("heading", { level: 1 });
+    expect(heading).toHaveTextContent(/^Service Status$/);
+    expect(screen.queryByText("dark-factory-product-1")).not.toBeInTheDocument();
   });
 });

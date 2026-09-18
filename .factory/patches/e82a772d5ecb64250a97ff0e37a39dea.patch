@@ -1,0 +1,43 @@
+--- a/frontend/src/pages/HealthPage.tsx
++++ b/frontend/src/pages/HealthPage.tsx
+@@ -54,7 +54,7 @@
+   if (state.phase === "error") {
+     return (
+       <main>
+-        <h1>dark-factory-product-1</h1>
++        <h1>Service Status</h1>
+         <p role="alert">{state.message}</p>
+         <Button onClick={reload}>Retry</Button>
+       </main>
+@@ -64,7 +64,7 @@
+ 
+   return (
+     <main>
+-      <h1>dark-factory-product-1</h1>
++      <h1>Service Status</h1>
+       <p>
+         Backend: <strong>{state.health.status}</strong>
+       </p>
+--- a/frontend/src/pages/HealthPage.test.tsx
++++ b/frontend/src/pages/HealthPage.test.tsx
+@@ -13,6 +13,10 @@
+ 
+     const markers = await screen.findAllByText("ok", { selector: "strong" });
+     expect(markers).toHaveLength(2);
++
++    const heading = screen.getByRole("heading", { level: 1 });
++    expect(heading).toHaveTextContent(/^Service Status$/);
++    expect(screen.queryByText("dark-factory-product-1")).not.toBeInTheDocument();
+   });
+ 
+   it("shows an alert with a retry action when the backend fails", async () => {
+@@ -22,5 +26,9 @@
+ 
+     expect(await screen.findByRole("alert")).toHaveTextContent("Backend unavailable");
+     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
++
++    const heading = screen.getByRole("heading", { level: 1 });
++    expect(heading).toHaveTextContent(/^Service Status$/);
++    expect(screen.queryByText("dark-factory-product-1")).not.toBeInTheDocument();
+   });
+ });
